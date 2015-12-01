@@ -33,6 +33,39 @@ A new version is available. Please consider to execute:
     }
 }
 
+function Acquire-Proxy {
+    $proxy = [System.Net.WebRequest]::GetSystemWebProxy()
+ 
+    if($proxy) {
+        $proxy.Credentials = [System.Net.CredentialCache]::DefaultCredentials
+ 
+    }
+    return $proxy
+ }
+
+function Invoke-ProxiedRestMethod($URL, $OutFile) {
+    $proxy = Acquire-Proxy
+ 
+    if ($proxy) {
+ 
+        $proxyUri = $proxy.GetProxy("$server$url")
+        Write-Verbose "Attempting proxy @ $proxyUri"
+ 
+        if ($OutFile) {
+            return Invoke-RestMethod -ProxyUseDefaultCredentials -Proxy $proxyUri $URL -OutFile $OutFile
+        } else {
+            return Invoke-RestMethod -ProxyUseDefaultCredentials -Proxy $proxyUri $URL 
+        }
+    } else {
+        if ($OutFile) {
+            return Invoke-RestMethod $URL -OutFile $OutFile
+        } else {
+            return Invoke-RestMethod $URL
+        }
+    }
+}
+
+
 function Check-GVM-API-Version() {
     Write-Verbose 'Checking GVM-API version'
     try {
@@ -69,7 +102,7 @@ function Get-Posh-Gvm-Version() {
 function Is-New-Posh-GVM-Version-Available() {
     try {
         $localVersion = Get-Posh-Gvm-Version
-        $currentVersion = Invoke-RestMethod $Script:PGVM_VERSION_SERVICE
+        $currentVersion = Invoke-ProxiedRestMethod $Script:PGVM_VERSION_SERVICE
 
         return ( $currentVersion -gt $localVersion )
     } catch {
@@ -110,7 +143,7 @@ function Invoke-Broadcast-API-Call {
     try {
         $target = "$Script:PGVM_BROADCAST_SERVICE/broadcast/latest"
         Write-Verbose "Broadcast API call to: $target"
-        return Invoke-RestMethod $target
+        return Invoke-ProxiedRestMethod $target
     } catch {
         Write-Verbose "Could not reached broadcast API"
         $Script:GVM_AVAILABLE = $false
@@ -298,10 +331,10 @@ function Invoke-API-Call([string]$Path, [string]$FileTarget, [switch]$IgnoreFail
         $target = "$Script:PGVM_SERVICE/$Path"
 
         if ( $FileTarget ) {
-            return Invoke-RestMethod $target -OutFile $FileTarget
+            return Invoke-ProxiedRestMethod $target -OutFile $FileTarget
         }
 
-        return Invoke-RestMethod $target
+        return Invoke-ProxiedRestMethod $target
     } catch {
         $Script:GVM_AVAILABLE = $false
         if ( ! ($IgnoreFailure) ) {
@@ -461,8 +494,11 @@ function Download-File($Url, $TargetFile) {
 	#>
     Write-Verbose "Try to download $Url with HttpWebRequest"
 	$uri = New-Object "System.Uri" $Url
+
     $request = [System.Net.HttpWebRequest]::Create($uri)
+    $request.Proxy = Acquire-Proxy
     $request.set_Timeout(15000)
+
     $response = $request.GetResponse()
 	$totalLength = [System.Math]::Floor($response.get_ContentLength()/1024)
 	$responseStream = $response.GetResponseStream()
